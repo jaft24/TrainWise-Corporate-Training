@@ -1,0 +1,304 @@
+---
+title: "Optimizing Financial Descions for Corporate Training"
+author: "Jaleta Fanta Tesgera"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'Test Cases for Mini-Project-Test-Cases/Test Case 1')
+library(readxl)
+library(lpSolve)
+```
+
+## Reading in Files and Building the Matrices
+   - - - - - - - - - - - - - - - - - - - 
+
+- Let's read in the three project files (programConflicts.xlsx, skillsNeeded.xlsx, and skillsOffered.xlsx) one at a time build the sets needed for the constraints. 
+
+1. Let's start with skillsNeeded:
+
+# Declare all the  necessary variabless
+```{r}
+skillsNeeded <- as.matrix(read_excel("skillsNeeded.xlsx"))
+nSkills <- ncol(skillsNeeded)-1
+nPeople <- nrow(skillsNeeded)
+namesOfPeople <- skillsNeeded[,1]
+namesOfSkills <- colnames(skillsNeeded)[2:(nSkills+1)]
+namesOfSkills
+namesOfPeople
+nPeople
+nSkills
+```
+
+# Build the matrix
+```{r}
+skillsNeededMatrix <- matrix(as.numeric(skillsNeeded[,2:(nSkills+1)]),
+                             nrow = nPeople,
+                             ncol = nSkills, 
+                             dimnames = list(namesOfPeople,namesOfSkills))
+
+skillsNeededMatrix
+```
+
+2. Now, let's tackle skillsOffered:
+
+# Declare all the  necessary variables
+```{r}
+skillsOffered <- as.matrix(read_excel("skillsOffered.xlsx"))
+namesOfPrograms <- skillsOffered[,1]
+nPrograms <- nrow(skillsOffered)
+
+skillsOffered
+```
+
+# Build the matrix
+```{r}
+skillsOfferedMatrix <- matrix(as.numeric(skillsOffered[,2:(nSkills+1)]),
+                             nrow=nPrograms,ncol=nSkills,
+                             dimnames = list(namesOfPrograms,namesOfSkills))
+skillsOfferedMatrix
+```
+
+3. Let's read in the programConflicts:
+
+# Declare all the  necessary variable
+```{r}
+programConflicts <- as.matrix(read_excel("programConflicts.xlsx"))
+programConflicts
+```
+
+Note: The conflicting programs are locked up in a text string. To get them out, we need to split the string and force it into numeric format that we will use later.
+
+4. Now, let's create our global variables
+
+```{r}
+namesOfVariables <- c()#initialize an empty list
+
+for(person in namesOfPeople){
+  for(program in namesOfPrograms){
+   newVariable <- paste("x",person,program,sep = ".") 
+    namesOfVariables <- c(namesOfVariables,newVariable)#tack the new one onto the end of the list
+  }
+}
+
+namesOfVariables
+nVariables <- length(namesOfVariables)
+nVariables
+```
+
+5. Get the objective vector, and multiply the vector as per the number of people
+
+# Declare all the  necessary variabless
+```{r}
+programCostIndex <- grep("Program Cost",colnames(skillsOffered))
+programCost <- (skillsOffered[,programCostIndex])
+objective_vector_row <- c(rep(as.numeric(programCost), nPeople))
+objective_vector_row
+```
+
+# Build the matrix
+```{r}
+objectiveFunction <- matrix(objective_vector_row, nrow = 1)
+colnames(objectiveFunction) <- namesOfVariables
+objectiveFunction
+```
+
+
+## Constraint Matrix Set Up
+   - - - - - - - - - - - - 
+   
+- Let's set up our constraint matrix. Our strategy here will be to create an empty matrix and add to it row by row using `rbind()`.
+
+
+1. Create the empty matrix
+
+```{r}
+constraintMatrix <- matrix(0, nrow = 0, ncol = nVariables,
+                           dimnames = list(c(),namesOfVariables))
+inequalities <- vector("character", length = 0)
+rhs <- vector("numeric", length = 0)
+```
+
+2. Let's create the first set of constraints that say that at most 3 employees can attend the same program.
+
+    I. Make the first constraint
+   
+```{r}
+zeroRow <- rep(0, nVariables)
+
+for (program in namesOfPrograms) {
+  pattern <- paste0(program, "$")
+  indexToChange <- grep(pattern, namesOfVariables)
+  newConstraint <- zeroRow
+  
+  newConstraint[indexToChange] <- 1
+  constraintMatrix <- rbind(constraintMatrix,newConstraint)
+}
+
+rownames(constraintMatrix) <- NULL
+firstConstraintRow <- nrow(constraintMatrix)
+firstConstraintRow
+ncol(constraintMatrix)
+options(max.print = 10000)
+constraintMatrix
+```
+
+# Update the inequalities 
+```{r}
+inequalities <- c(inequalities, rep("<=", firstConstraintRow))
+inequalities
+```
+
+# Update the rhs 
+```{r}
+maxEmp <- 3
+rhs <- c(rhs, rep(maxEmp, firstConstraintRow))
+rhs
+```
+
+
+    II. Let's create the second set of constraints that say each person is trained to the skills they need.
+
+```{r}
+zeroRow <- rep(0, nVariables)
+
+# double loop to go through every person's required skill
+for (person in namesOfPeople) {
+  for (skill in namesOfSkills) {
+    
+    # check if the person needs that skill
+    if ( skillsNeededMatrix[person, skill] == 1 ) {
+       
+       indexToChange <- c()
+      
+      # loop through the vertical columns of the skills required to see which programs offer it
+      for (program in namesOfPrograms) {
+        
+        # check to see if a program offers that skill
+        if ( skillsOfferedMatrix[program, skill] == 1) {
+          
+            pattern <- paste0(person, ".", program, "$")
+            matching_index <- grep(pattern, namesOfVariables)
+            indexToChange <- c(indexToChange, matching_index)
+        }
+      }
+      
+           newConstraint <- zeroRow
+           newConstraint[indexToChange] <- 1
+           constraintMatrix <- rbind(constraintMatrix,newConstraint)
+            
+    }
+  }
+}
+
+
+rownames(constraintMatrix) <- NULL
+secondConstraintRow <- nrow(constraintMatrix) - firstConstraintRow
+secondConstraintRow
+nrow(constraintMatrix)
+ncol(constraintMatrix)
+options(max.print = 10000)
+
+# only print the new additions to the constraint Matrix
+constraintMatrix[(firstConstraintRow + 1):nrow(constraintMatrix), ]
+```
+
+# Update the inequalities 
+```{r}
+inequalities <- c(inequalities, rep(">=", secondConstraintRow))
+inequalities
+```
+
+# Update the rhs 
+```{r}
+maxVal <- 1
+rhs <- c(rhs, rep(maxVal, secondConstraintRow))
+rhs
+```
+
+
+    III. Let's create the third set of constraints that say that no one can attend two training sessions that conflict with one another.
+
+```{r}
+zeroRow <- rep(0, nVariables)
+
+# assign M to the number of Programs
+M <- nPrograms
+
+# double loop to assume everybody considers a program
+for ( person in namesOfPeople) {
+  for ( program in namesOfPrograms) {
+    
+   # get a list of conflicting programs for program p
+   p <- grep( paste0(program, "$"), namesOfPrograms)
+   conflictingPrograms <- as.numeric(unlist(strsplit(programConflicts[p, 2],split = ", ")))
+  
+   indexToChange <- c()
+   
+   for (conflictingProgram in conflictingPrograms) {
+       pattern <- paste0(person, ".", namesOfPrograms[conflictingProgram], "$")
+       matching_index <- grep(pattern, namesOfVariables)
+       indexToChange <- c(indexToChange, matching_index)
+   }
+   
+   
+   newConstraint <- zeroRow
+   newConstraint[ grep( paste0(person, ".", program, "$") ,namesOfVariables)  ] <- M
+   newConstraint[indexToChange] <- 1
+   constraintMatrix <- rbind(constraintMatrix,newConstraint)
+    
+  }
+}
+
+
+rownames(constraintMatrix) <- NULL
+thirdConstraintRow <- nrow(constraintMatrix) - secondConstraintRow - firstConstraintRow
+thirdConstraintRow
+nrow(constraintMatrix)
+ncol(constraintMatrix)
+options(max.print = 10000)
+
+# only print the new additions to the constraint Matrix
+constraintMatrix[(secondConstraintRow+firstConstraintRow + 1):nrow(constraintMatrix), ]
+
+```
+
+# Update the inequalities 
+```{r}
+inequalities <- c(inequalities, rep("<=", thirdConstraintRow))
+inequalities
+```
+
+# Update the rhs 
+```{r}
+rhs <- c(rhs, rep(M, thirdConstraintRow))
+rhs
+```
+
+
+## Let's solve it in R
+   - - - - - - - - - -
+
+ - We are looking for the optimal minimum cost and who should go to which program to obtain that cost.
+   Note: Set `all.bin=TRUE` as an option in `lp()` to set all decision variables as binary.
+
+# Lp Solve
+```{r}
+lp_solution <- lp(direction = "min",
+                  const.mat = constraintMatrix,
+                  const.dir = inequalities,
+                  const.rhs = rhs,
+                  objective.in = objectiveFunction,
+                  all.bin = TRUE)
+
+lp_solution$status
+lp_solution$solution
+lp_solution$objval
+lp_solution$solution==1
+namesOfVariables[lp_solution$solution==1]
+
+```
+
+
+
